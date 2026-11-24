@@ -1,65 +1,68 @@
-import { useEffect, useState } from "react"
-import { SPOTS, type Options, type Spot } from "./parking"
+import { useCallback, useEffect, useRef, useState } from "react"
+import type { Options, Spot, SpotSize } from "./parking"
 
 const BASE = import.meta.env.VITE_API_URL ?? import.meta.env.BASE_URL.replace(/\/$/, "")
-const POLL_MS = 5000
-
-interface ApiSpot {
-  id: string
-  busy: boolean
+export class ApiError extends Error {
+  constructor(public status: number, message: string) { super(message) }
 }
-
-interface ApiRecommendation {
-  spots: Array<{ rank: number; spot: ApiSpot }>
-  no_fit_reason: string | null
-}
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    ...init, headers: { "Content-Type": "application/json", ...init?.headers },
   })
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
-  return res.json() as Promise<T>
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    const message = typeof body?.detail === "string" ? body.detail : res.status === 422 ? "Проверьте значения полей" : `Ошибка сервера (${res.status})`
+    throw new ApiError(res.status, message)
+  }
+  return res.status === 204 ? undefined as T : res.json() as Promise<T>
 }
+export const errorMessage = (error: unknown) => error instanceof Error ? error.message : "Не удалось связаться с сервером"
+export const refreshParking = () => window.dispatchEvent(new Event("parking:refresh"))
+export const utcDate = (value: string) => new Date(/(Z|[+-]\d\d:\d\d)$/.test(value) ? value : `${value}Z`)
 
-/** Текущая занятость: план парковки из parking.ts + busy с бэкенда. Обновляется каждые 5 секунд. */
 export function useParkingSpots() {
-  const [spots, setSpots] = useState<Spot[]>(SPOTS)
+  const [spots, setSpots] = useState<Spot[]>([])
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState(false)
-
-  useEffect(() => {
-    let alive = true
-    const load = async () => {
-      try {
-        const data = await request<ApiSpot[]>("/api/spots")
-        const busy = new Map(data.map((s) => [s.id, s.busy]))
-        if (!alive) return
-        setSpots(SPOTS.map((s) => ({ ...s, busy: busy.get(s.id) ?? true })))
-        setLoaded(true)
-        setError(false)
-      } catch {
-        if (alive) setError(true)
-      }
-    }
-    load()
-    const timer = setInterval(load, POLL_MS)
-    return () => {
-      alive = false
-      clearInterval(timer)
+  const sequence = useRef(0)
+  const refresh = useCallback(async (signal?: AbortSignal) => {
+    const seq = ++sequence.current
+    try {
+      const data = await request<Spot[]>("/api/spots", { signal })
+      if (seq !== sequence.current || signal?.aborted) return
+      setSpots(data); setLoaded(true); setError(false)
+    } catch {
+      if (seq === sequence.current && !signal?.aborted) setError(true)
     }
   }, [])
-
-  return { spots, loaded, error }
+  useEffect(() => {
+    const ctrl = new AbortController()
+    const update = () => { void refresh(ctrl.signal) }
+    update()
+    const timer = setInterval(update, 5000)
+    window.addEventListener("parking:refresh", update)
+    return () => { ctrl.abort(); sequence.current++; clearInterval(timer); window.removeEventListener("parking:refresh", update) }
+  }, [refresh])
+  return { spots, loaded, error, refresh }
 }
-
-/** Подбор мест на бэкенде: возвращает id мест в порядке рекомендации. */
-export async function recommend(o: Options, signal?: AbortSignal): Promise<string[]> {
-  const data = await request<ApiRecommendation>("/api/recommendations", {
-    method: "POST",
-    body: JSON.stringify(o),
-    signal,
-  })
-  return data.spots.map((s) => s.spot.id)
+export interface Recommendation {
+  spots: Array<{ rank: number; score: number; reasons: string[]; spot: Spot }>
+  no_fit_reason: string | null
 }
+export const recommend = (o: Options, signal?: AbortSignal) => request<Recommendation>("/api/recommendations", { method: "POST", body: JSON.stringify(o), signal })
+export interface Assignment extends Options {
+  id: string
+  spot_id: string
+  status: "held" | "parked" | "lost" | "misparked" | "expired" | "cancelled"
+  created_at: string
+  expires_at: string
+  resolved_at: string | null
+}
+export const createAssignment = (o: Options, spot_id: string) => request<Assignment>("/api/assignments", { method: "POST", body: JSON.stringify({ ...o, spot_id }) })
+export const getAssignment = (id: string, signal?: AbortSignal) => request<Assignment>(`/api/assignments/${encodeURIComponent(id)}`, { signal })
+export const cancelAssignment = (id: string) => request<Assignment>(`/api/assignments/${encodeURIComponent(id)}/cancel`, { method: "POST" })
+export interface ParkingEvent { id: number; ts: string; type: string; spot_id: string | null; assignment_id: string | null; data: Record<string, unknown> }
+export interface Stats { assignments: Record<string, number>; assignment_success_rate: number | null; conflict_rate: number | null; time_to_park_p50: number | null; time_to_park_p90: number | null; occupancy: number }
+export interface SpotEdit { size: SpotSize; ev: boolean; enabled: boolean; length_m: number | null; width_m: number | null; height_m: number | null }
+export interface RouteGraph { entry: string; nodes: Array<{ id: string; x: number; y: number }>; edges: Array<{ source: string; target: string; seconds: number; enabled: boolean; bidirectional: boolean }> }
+export const adminHeaders = (key: string) => ({ "X-Api-Key": key })

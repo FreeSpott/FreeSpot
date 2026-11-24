@@ -10,6 +10,14 @@ export interface Spot {
   size: SpotSize
   ev: boolean
   busy: boolean
+  state: "free" | "held" | "occupied" | "closed"
+  enabled: boolean
+  length_m: number | null
+  width_m: number | null
+  height_m: number | null
+  route_points: [number, number][]
+  drive_seconds: number | null
+  updated_at: string
 }
 
 export interface Options {
@@ -17,31 +25,12 @@ export interface Options {
   charging: boolean
   accessible: boolean
   priority: Priority
+  length_m?: number | null
+  width_m?: number | null
+  height_m?: number | null
 }
 
 export const ROWS: Row[] = ["A", "B", "C", "D"]
-
-function sizeFor(row: Row, i: number): SpotSize {
-  if (row === "A" && i >= 8) return "accessible"
-  if (row === "B" && i < 3) return "compact"
-  if (row === "D" && i >= 6) return "large"
-  return "standard"
-}
-
-// План уровня P1. Занятость (busy) приходит с бэкенда — см. api.ts
-export const SPOTS: Spot[] = ROWS.flatMap((row) =>
-  Array.from({ length: 10 }, (_, i) => {
-    const id = `${row}${String(i + 1).padStart(2, "0")}`
-    return {
-      id,
-      row,
-      index: i,
-      size: sizeFor(row, i),
-      ev: row === "C" && i < 4,
-      busy: false,
-    }
-  }),
-)
 
 export const SIZE_INFO: Record<SpotSize, { label: string; dims: string }> = {
   compact: { label: "Компактное", dims: "2,3 × 4,5 м" },
@@ -67,7 +56,6 @@ export const VEHICLES: Array<{ id: VehicleType; label: string; dims: string }> =
 export const CELL_W = 80
 export const CELL_H = 110
 export const ROW_TOP: Record<Row, number> = { A: 20, B: 210, C: 320, D: 510 }
-const AISLE_Y: Record<Row, number> = { A: 170, B: 170, C: 470, D: 470 }
 export const NOSE_DOWN: Record<Row, boolean> = {
   A: true,
   B: false,
@@ -79,9 +67,10 @@ export const cellX = (s: Spot) => 100 + s.index * CELL_W
 export const cellCx = (s: Spot) => cellX(s) + CELL_W / 2
 
 export function routePath(s: Spot) {
-  const end = { A: 122, B: 218, C: 422, D: 518 }[s.row]
-  return `M 45 42 V ${AISLE_Y[s.row]} H ${cellCx(s)} V ${end}`
+  return s.route_points.map(([x, y], i) => `${i ? "L" : "M"} ${x} ${y}`).join(" ")
 }
+
+export const spotDimensions = (s: Spot) => `${s.width_m?.toLocaleString("ru-RU")} × ${s.length_m?.toLocaleString("ru-RU")} м${s.height_m ? ` · высота до ${s.height_m.toLocaleString("ru-RU")} м` : ""}`
 
 export function reasonsFor(s: Spot, o: Options, isBest: boolean) {
   const list: string[] = []
@@ -98,11 +87,9 @@ export function reasonsFor(s: Spot, o: Options, isBest: boolean) {
 }
 
 export function routeSteps(s: Spot) {
-  const aisle = s.row === "A" || s.row === "B" ? 1 : 2
-  const side = s.row === "A" || s.row === "C" ? "слева" : "справа"
   return [
-    { title: "Въезд", text: `Следуйте до проезда ${aisle}` },
-    { title: `Ряд ${s.row}`, text: `Двигайтесь вдоль проезда ${aisle}` },
-    { title: `Место ${s.id}`, text: `Будет ${side} по ходу движения` },
+    { title: "Въезд", text: "Начните движение по выделенному маршруту" },
+    { title: `Зона ${s.row}`, text: "Следуйте линии на схеме по открытым проездам" },
+    { title: `Место ${s.id}`, text: "Завершите маршрут у отмеченного места" },
   ]
 }

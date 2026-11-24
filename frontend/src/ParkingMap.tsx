@@ -129,7 +129,7 @@ function MapCell({
         ? "xl"
         : null
 
-  let kind: "busy" | "free" | "dim" | "selected" | "alt" = spot.busy
+  let kind: "busy" | "free" | "dim" | "selected" | "alt" | "held" | "closed" = spot.state === "held" ? "held" : spot.state === "closed" ? "closed" : spot.busy
     ? "busy"
     : "free"
   if (selected) kind = "selected"
@@ -142,6 +142,8 @@ function MapCell({
     dim: "свободно, не подходит",
     selected: "выбранное место",
     alt: `вариант ${altRank}`,
+    held: "удерживается другим водителем",
+    closed: "недоступно для подбора",
   }[kind]
   const clickable = kind === "alt"
 
@@ -174,7 +176,7 @@ function MapCell({
           tone={spot.index + spot.row.charCodeAt(0)}
         />
       )}
-      {(kind === "free" || kind === "dim" || kind === "alt") && (
+      {(kind === "free" || kind === "dim" || kind === "alt" || kind === "held" || kind === "closed") && (
         <>
           <text className="cell__id" x={cx} y={y + 58} textAnchor="middle">
             {spot.id}
@@ -202,7 +204,7 @@ function MapCell({
             y={y + 94}
             textAnchor="middle"
           >
-            ваше место
+            выбрано
           </text>
         </>
       )}
@@ -254,24 +256,27 @@ export function ParkingMap({
   onPick: (s: Spot) => void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
+  const columns = Math.max(10, ...SPOTS.map((s) => s.index + 1))
+  const mapWidth = 200 + columns * CELL_W
+  const endX = 100 + columns * CELL_W
 
   useEffect(() => {
     const el = scrollRef.current
     if (!el || !selected || el.scrollWidth <= el.clientWidth) return
-    const ratio = cellCx(selected) / 1000
+    const ratio = cellCx(selected) / mapWidth
     el.scrollTo({
       left: ratio * el.scrollWidth - el.clientWidth / 2,
       behavior: "smooth",
     })
-  }, [selected])
+  }, [selected, mapWidth])
 
   const rowLines = (row: Row) => {
     const top = ROW_TOP[row]
     const back = NOSE_DOWN[row] ? top : top + CELL_H
     return (
       <g key={row} className="map__lines">
-        <line x1="100" y1={back} x2="900" y2={back} />
-        {Array.from({ length: 11 }, (_, k) => (
+        <line x1="100" y1={back} x2={endX} y2={back} />
+        {Array.from({ length: columns + 1 }, (_, k) => (
           <line
             key={k}
             x1={100 + k * CELL_W}
@@ -288,7 +293,8 @@ export function ParkingMap({
     <div className={`map map--${mode}`} ref={scrollRef}>
       <svg
         className="map__svg"
-        viewBox="0 0 1000 640"
+        viewBox={`0 0 ${mapWidth} 640`}
+        style={{ minWidth: mapWidth * .76 }}
         role="group"
         aria-label="Схема парковки, уровень P1"
       >
@@ -318,10 +324,10 @@ export function ParkingMap({
           rx="14"
           className="map__aisle"
         />
-        <rect x="0" y="130" width="1000" height="80" className="map__aisle" />
-        <rect x="0" y="430" width="1000" height="80" className="map__aisle" />
+        <rect x="0" y="130" width={mapWidth} height="80" className="map__aisle" />
+        <rect x="0" y="430" width={mapWidth} height="80" className="map__aisle" />
         <rect
-          x="900"
+          x={endX}
           y="130"
           width="100"
           height="510"
@@ -329,7 +335,7 @@ export function ParkingMap({
           className="map__aisle"
         />
         <path
-          d="M 45 60 V 600 M 110 170 H 890 M 110 470 H 890"
+          d={`M 45 60 V 600 M 110 170 H ${endX - 10} M 110 470 H ${endX - 10}`}
           className="map__lane"
         />
         {[220, 340].map((y) => (
@@ -355,12 +361,12 @@ export function ParkingMap({
         {ROWS.map(rowLines)}
 
         <g className="map__lifts">
-          <rect x="910" y="24" width="80" height="100" rx="14" />
-          <SvgIcon name="lift" x={938} y={40} size={24} color="#1d2126" />
-          <text x="950" y="88" textAnchor="middle">
+          <rect x={endX + 10} y="24" width="80" height="100" rx="14" />
+          <SvgIcon name="lift" x={endX + 38} y={40} size={24} color="#1d2126" />
+          <text x={endX + 50} y="88" textAnchor="middle">
             Лифты
           </text>
-          <text x="950" y="105" textAnchor="middle" className="map__lifts-sub">
+          <text x={endX + 50} y="105" textAnchor="middle" className="map__lifts-sub">
             выход
           </text>
         </g>
@@ -370,7 +376,7 @@ export function ParkingMap({
           ["C", 380],
           ["D", 570],
         ] as const).map(([z, y]) => (
-          <text key={z} x="950" y={y} textAnchor="middle" className="map__zone">
+          <text key={z} x={endX + 50} y={y} textAnchor="middle" className="map__zone">
             Зона {z}
           </text>
         ))}
@@ -449,8 +455,10 @@ export function Legend() {
         <i className="lg lg--selected">
           <Icon name="pin" size={12} />
         </i>
-        Ваше место
+        Выбрано
       </span>
+      <span><i className="lg lg--held">H</i>Удерживается</span>
+      <span><i className="lg lg--closed">×</i>Закрыто</span>
       <span>
         <i className="lg lg--alt">2</i>Вариант
       </span>

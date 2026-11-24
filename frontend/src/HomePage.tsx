@@ -6,11 +6,15 @@ export function HomePage({
   loaded,
   onFind,
   onMap,
+  onOperator,
+  error,
 }: {
   spots: Spot[]
   loaded: boolean
   onFind: () => void
   onMap: () => void
+  onOperator: () => void
+  error: boolean
 }) {
   const freeSpots = SPOTS.filter((spot) => !spot.busy)
   return (
@@ -27,6 +31,8 @@ export function HomePage({
             <span className="home-location__chevron">⌄</span>
           </div>
         </header>
+        <button className="home-link operator-entry" type="button" onClick={onOperator}>Кабинет оператора</button>
+        {error && <p className="notice notice--error" role="alert">Нет связи с сервером. Данные о свободных местах временно недоступны.</p>}
 
         <section className="home-hero" id="top">
           <div className="home-hero__copy">
@@ -55,12 +61,12 @@ export function HomePage({
               </div>
             </div>
             <div className="home-free-count">
-              <strong>{loaded ? freeSpots.length.toString().padStart(2, "0") : "--"}</strong>
+              <strong>{loaded && !error ? freeSpots.length.toString().padStart(2, "0") : "--"}</strong>
               <span><b>свободных мест</b><small>из {SPOTS.length} на уровне P1</small></span>
             </div>
             <div className="home-occupancy">
-              <div><span>Занятость парковки</span><b>{SPOTS.length - freeSpots.length} / {SPOTS.length}</b></div>
-              <span className="home-occupancy__bar"><i style={{ width: `${((SPOTS.length - freeSpots.length) / SPOTS.length) * 100}%` }} /></span>
+              <div><span>Недоступно для подбора</span><b>{loaded && !error ? `${SPOTS.length - freeSpots.length} / ${SPOTS.length}` : "—"}</b></div>
+              <span className="home-occupancy__bar"><i style={{ width: `${SPOTS.length ? ((SPOTS.length - freeSpots.length) / SPOTS.length) * 100 : 0}%` }} /></span>
             </div>
             <div className="home-map-preview" aria-label="Обзор свободных и занятых мест по зонам">
               <div className="home-map-preview__entry"><span /> ВЪЕЗД</div>
@@ -71,7 +77,7 @@ export function HomePage({
                   return (
                     <div className="home-mini-row" key={row}>
                       <b>{row}</b>
-                      <div className="home-mini-row__slots">
+                        <div className="home-mini-row__slots" style={{ gridTemplateColumns: `repeat(${Math.max(rowSpots.length, 1)}, minmax(0, 1fr))` }}>
                         {rowSpots.map((spot) => <i key={spot.id} className={spot.busy ? "is-busy" : "is-free"} />)}
                       </div>
                       <small>{rowFree} свободно</small>

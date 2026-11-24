@@ -1,7 +1,7 @@
 import { Button, Card, Icon, ToggleChip } from "./ui"
-import { SIZE_INFO, ZONE_INFO, VEHICLES, reasonsFor, routeSteps, type VehicleType, type Priority, type Spot, type Options } from "./parking"
+import { SIZE_INFO, ZONE_INFO, VEHICLES, reasonsFor, routeSteps, spotDimensions, type VehicleType, type Priority, type Spot, type Options } from "./parking"
 
-export type Phase = "idle" | "done"
+export type Phase = "idle" | "loading" | "error" | "done"
 
 export function VehiclePanel({
   vehicle,
@@ -13,6 +13,8 @@ export function VehiclePanel({
   priority,
   setPriority,
   onReset,
+  dimensions,
+  onDimensions,
 }: {
   vehicle: VehicleType | null
   onVehicle: (v: VehicleType) => void
@@ -23,6 +25,8 @@ export function VehiclePanel({
   priority: Priority
   setPriority: (p: Priority) => void
   onReset: () => void
+  dimensions: { length_m: number | null; width_m: number | null; height_m: number | null }
+  onDimensions: (value: { length_m: number | null; width_m: number | null; height_m: number | null }) => void
 }) {
   return (
     <Card
@@ -87,6 +91,10 @@ export function VehiclePanel({
           </button>
         ))}
       </div>
+      <details className="dimensions"><summary>Указать точные габариты</summary>
+        <p className="muted">Необязательно. Запас: 20 см по длине и 40 см по ширине.</p>
+        <div className="form-grid">{([ ["length_m", "Длина, м", 30], ["width_m", "Ширина, м", 10], ["height_m", "Высота, м", 10] ] as const).map(([key, label, max]) => <label key={key}>{label}<input type="number" min="0.1" max={max} step="0.01" value={dimensions[key] ?? ""} onChange={(e) => onDimensions({ ...dimensions, [key]: e.target.value === "" ? null : e.target.valueAsNumber })} /></label>)}</div>
+      </details>
     </Card>
   )
 }
@@ -119,7 +127,7 @@ export function AvailabilityPanel({
           <span>из {SPOTS.length} мест</span>
         </div>
         <div className="avail__bar">
-          <i style={{ width: `${(free.length / SPOTS.length) * 100}%` }} />
+          <i style={{ width: `${SPOTS.length ? (free.length / SPOTS.length) * 100 : 0}%` }} />
         </div>
         {fitCount !== null && (
           <div className={`avail__fit ${fitCount === 0 ? "is-zero" : ""}`}>
@@ -148,6 +156,13 @@ export function RecommendationPanel({
   onWithoutCharging,
   onWithoutAccessible,
   onReset,
+  phase,
+  error,
+  noFitReason,
+  onRetry,
+  onReserve,
+  reserving,
+  held,
 }: {
   options: Options | null
   spot?: Spot
@@ -156,6 +171,13 @@ export function RecommendationPanel({
   onWithoutCharging: () => void
   onWithoutAccessible: () => void
   onReset: () => void
+  phase: Phase
+  error: string
+  noFitReason: string | null
+  onRetry: () => void
+  onReserve: () => void
+  reserving: boolean
+  held: boolean
 }) {
   if (!options) {
     return (
@@ -173,6 +195,8 @@ export function RecommendationPanel({
     )
   }
 
+  if (!held && (phase === "loading" || phase === "error")) return <Card title="Подбор места" className="card--reco"><p role={phase === "error" ? "alert" : "status"}>{phase === "loading" ? "Проверяем доступные места…" : `Не удалось выполнить подбор. ${error}`}</p>{phase === "error" && <Button onClick={onRetry}>Повторить подбор</Button>}</Card>
+  if (held && !spot) return <Card title="Ваше назначение" className="card--reco"><p role="status">Проверяем назначение и загружаем маршрут…</p></Card>
   if (!spot) {
     const needsCharger = options.vehicle === "electric" && options.charging
     const reason = options.accessible
@@ -192,7 +216,7 @@ export function RecommendationPanel({
             </i>
           </span>
           <b>Подходящих мест нет</b>
-          <p>{reason}. Попробуйте изменить условия подбора.</p>
+          <p>{noFitReason ?? reason}. Попробуйте изменить условия подбора.</p>
         </div>
         <div className="stack">
           {needsCharger && (
@@ -235,20 +259,23 @@ export function RecommendationPanel({
               Зона {spot.row} · {ZONE_INFO[spot.row]}
             </b>
             <span>
-              {SIZE_INFO[spot.size].label} · {SIZE_INFO[spot.size].dims}
+              {SIZE_INFO[spot.size].label} · {spotDimensions(spot)}
             </span>
             <div className="reco__metrics">
               <span>
                 <Icon name="route" size={14} /> Проезд{" "}
                 {spot.row === "A" || spot.row === "B" ? 1 : 2}
               </span>
+              {spot.drive_seconds !== null && <span>≈ {Math.ceil(spot.drive_seconds)} сек до места</span>}
             </div>
           </div>
         </div>
         <div className="reco__why">
           <p>{reasonsFor(spot, options, isBest).join(" ")}</p>
         </div>
-        {others.length > 0 && (
+        {!held && <Button onClick={onReserve} disabled={reserving || phase !== "done"}>{reserving ? "Закрепляем…" : "Закрепить место"}</Button>}
+        {held && <p className="muted">Следуйте по маршруту. После парковки дождитесь подтверждения датчика.</p>}
+        {!held && others.length > 0 && (
           <div className="reco__alts">
             <span className="overline">Другие подходящие</span>
             <div className="alt-list">
@@ -292,7 +319,8 @@ export function RoutePanel({ spot, phase }: { spot?: Spot; phase: Phase }) {
       ) : (
         <p className="route-empty">
           <Icon name="route" size={16} />{" "}
-          {phase === "done"
+          {phase === "loading" ? "Рассчитываем маршрут…" : phase === "error" ? "Маршрут временно недоступен."
+            : phase === "done"
             ? "Для выбранных условий маршрут не найден."
             : "Выберите автомобиль, чтобы увидеть маршрут."}
         </p>
