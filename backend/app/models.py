@@ -22,6 +22,10 @@ class Spot(Base):
     walk_cost: Mapped[float] = mapped_column(Float)
     drive_cost: Mapped[float] = mapped_column(Float)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    length_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    width_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    height_m: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class AssignmentStatus:
@@ -56,6 +60,16 @@ class Assignment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    length_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    width_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    height_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class ParkingConfig(Base):
+    __tablename__ = "parking_config"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    data: Mapped[dict[str, Any]] = mapped_column(JSON)
 
 
 class Event(Base):

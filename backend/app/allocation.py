@@ -20,6 +20,8 @@ SIZE_LABEL = {
     "accessible": "Расширенное",
 }
 
+SIZE_DIMENSIONS = {"compact": (4.5, 2.3), "standard": (5.0, 2.5), "large": (5.5, 2.8), "accessible": (5.0, 3.5)}
+
 
 @dataclass(frozen=True)
 class Request:
@@ -27,6 +29,9 @@ class Request:
     charging: bool = False
     accessible: bool = False
     priority: Priority = "entry"
+    length_m: float | None = None
+    width_m: float | None = None
+    height_m: float | None = None
 
     @property
     def needs_charger(self) -> bool:
@@ -42,6 +47,9 @@ class Candidate:
     available: bool
     walk_cost: float
     drive_cost: float
+    length_m: float | None = None
+    width_m: float | None = None
+    height_m: float | None = None
 
 
 @dataclass(frozen=True)
@@ -53,12 +61,20 @@ class Ranked:
 
 def fits(spot: Candidate, req: Request) -> bool:
     """Подходит ли место автомобилю (без учёта занятости)."""
+    length, width = SIZE_DIMENSIONS[spot.size]
+    if req.length_m is not None and req.length_m + 0.2 > (spot.length_m or length):
+        return False
+    if req.width_m is not None and req.width_m + 0.4 > (spot.width_m or width):
+        return False
+    if req.height_m is not None and spot.height_m is not None and req.height_m > spot.height_m:
+        return False
     if req.accessible:
         return spot.size == "accessible" and req.vehicle != "suv" and not (req.needs_charger and not spot.ev)
     if spot.size == "accessible":
         return False
     if req.needs_charger:
-        return spot.ev
+        if not spot.ev:
+            return False
     if spot.ev and req.vehicle != "electric":
         return False
     if req.vehicle == "suv":

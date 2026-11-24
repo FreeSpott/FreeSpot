@@ -8,16 +8,44 @@ from ..schemas import (
     AssignmentIn,
     AssignmentOut,
     EventOut,
+    ParkingPlanIn,
     RecommendIn,
     RecommendOut,
+    RouteGraph,
     SensorEventIn,
     SensorEventOut,
     SpotOut,
+    SpotUpdate,
     StatsOut,
     SummaryOut,
 )
 
 router = APIRouter(prefix="/api")
+
+
+@router.get("/admin/session", dependencies=[Depends(require_api_key)], tags=["admin"])
+async def admin_session() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@router.put("/admin/spots/{spot_id}", response_model=SpotOut, dependencies=[Depends(require_api_key)], tags=["admin"])
+async def put_spot(spot_id: str, data: SpotUpdate, session: SessionDep) -> SpotOut:
+    return await service.update_spot(session, spot_id, data)
+
+
+@router.post("/admin/plan", response_model=list[SpotOut], dependencies=[Depends(require_api_key)], tags=["admin"])
+async def import_plan(data: ParkingPlanIn, session: SessionDep) -> list[SpotOut]:
+    return await service.import_plan(session, data)
+
+
+@router.get("/admin/routes", response_model=RouteGraph, dependencies=[Depends(require_api_key)], tags=["admin"])
+async def get_routes(session: SessionDep) -> RouteGraph:
+    return await service.get_routes(session)
+
+
+@router.put("/admin/routes", response_model=RouteGraph, dependencies=[Depends(require_api_key)], tags=["admin"])
+async def put_routes(data: RouteGraph, session: SessionDep) -> RouteGraph:
+    return await service.update_routes(session, data)
 
 
 @router.get("/spots", response_model=list[SpotOut], tags=["parking"], summary="Все места и их состояние")

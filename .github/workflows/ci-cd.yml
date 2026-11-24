@@ -12,6 +12,26 @@ concurrency:
   group: freespot-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  frontend-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: corepack enable && corepack prepare pnpm@12.21.0 --activate
+      - run: pnpm install --frozen-lockfile
+        working-directory: frontend
+      - run: pip install -r backend/requirements-dev.txt
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: frontend
+      - run: pnpm typecheck && pnpm build && pnpm test:e2e
+        working-directory: frontend
+        env:
+          FREESPOT_PYTHON: python3
   test:
     runs-on: ubuntu-24.04
     steps:
@@ -34,7 +54,7 @@ jobs:
           helm lint deploy/helm/freespot --set backend.tag=check --set frontend.tag=check
           helm template freespot deploy/helm/freespot --namespace team-3 --set backend.tag=check --set frontend.tag=check > /dev/null
   build:
-    needs: test
+    needs: [test, frontend-test]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     permissions:
