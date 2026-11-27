@@ -25,3 +25,8 @@ ingress:
   enabled: true
   className: traefik
   host: ""
+publicTunnel:
+  # Demo access without a domain/account. Free URL is temporary.
+  enabled: true
+  image: alpine/git:2.49.1
+  proxyImage: nginxinc/nginx-unprivileged:1.27-alpine
