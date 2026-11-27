@@ -21,11 +21,20 @@ data:
     server {
       listen 8080;
       server_name _;
+      # The upstream nginx may skip gzip for requests with a Via header.
+      # Compress at the public boundary before the bandwidth-limited tunnel.
+      gzip on;
+      gzip_vary on;
+      gzip_proxied any;
+      gzip_comp_level 5;
+      gzip_min_length 256;
+      gzip_types text/css application/javascript application/json image/svg+xml font/otf font/ttf application/vnd.ms-opentype;
       location = {{ .Values.rootPath }} {
         return 302 {{ .Values.rootPath }}/;
       }
       location {{ .Values.rootPath }}/ {
         proxy_pass http://freespot-frontend:80/;
+        proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Smoke-check the actual Ingress URL, including assets and protected sensor API."""
+import gzip
 import json
 import sys
 from html.parser import HTMLParser
@@ -11,8 +12,12 @@ base = sys.argv[1].rstrip("/") + "/"
 
 
 def get(path):
-    with urlopen(urljoin(base, path), timeout=10) as response:
-        return response.read(), response.headers.get("Content-Type", "")
+    request = Request(urljoin(base, path), headers={"Accept-Encoding": "gzip"})
+    with urlopen(request, timeout=10) as response:
+        body = response.read()
+        if response.headers.get("Content-Encoding") == "gzip":
+            body = gzip.decompress(body)
+        return body, response.headers.get("Content-Type", "")
 
 
 class Assets(HTMLParser):
