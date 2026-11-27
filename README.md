@@ -62,6 +62,8 @@ pnpm install && pnpm dev
 
 Helm chart, настройка GHCR, первый запуск и CI/CD описаны в [deploy/k8s/README.md](deploy/k8s/README.md).
 
+Внутренний Ingress кластера доступен только из приватной сети. Для публичной демонстрации chart также запускает SSH-туннель localhost.run: HTTPS-ссылка выводится в Summary Deploy или командой `python3 deploy/k8s/public-url.py` при настроенном `KUBECONFIG`. Компьютер оставлять включённым не нужно. Бесплатная ссылка временная и может меняться; постоянный адрес требует домена/публичного прокси.
+
 ## Деплой на VM с Docker
 
 Подойдёт любая VM с Docker (Yandex Cloud, MTS Cloud, VK Cloud и т.п.), 2 vCPU и 4 ГБ RAM:

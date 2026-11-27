@@ -1,0 +1,136 @@
+{{- if .Values.publicTunnel.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: freespot-public-proxy
+  labels: {app.kubernetes.io/part-of: freespot}
+data:
+  # Verified against https://localhost.run/docs/security (ED25519 fingerprint).
+  known_hosts: |
+    localhost.run ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILVqOuSMnyeGDVO1lG6EaG5In/dXABCchhmHKkuRU2s9
+  health.sh: |
+    # Probe the real public route, not merely an old registration log entry.
+    set -eu
+    address=$(grep '"run.localhost.tunnel.registered"' /tmp/tunnel.log \
+      | sed -n 's/.*"address"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+      | tail -n 1)
+    printf '%s\n' "$address" | grep -Eq '^[a-z0-9-]+(\.app)?\.(lhr\.life|localhost\.run)$'
+    wget -q -T 10 -O - "https://$address{{ .Values.rootPath }}/ready" \
+      | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"'
+  default.conf: |
+    server {
+      listen 8080;
+      server_name _;
+      # The upstream nginx may skip gzip for requests with a Via header.
+      # Compress at the public boundary before the bandwidth-limited tunnel.
+      gzip on;
+      gzip_vary on;
+      gzip_proxied any;
+      gzip_comp_level 5;
+      gzip_min_length 256;
+      gzip_types text/css application/javascript application/json image/svg+xml font/otf font/ttf application/vnd.ms-opentype;
+      location = {{ .Values.rootPath }} {
+        return 302 {{ .Values.rootPath }}/;
+      }
+      location {{ .Values.rootPath }}/ {
+        proxy_pass http://freespot-frontend:80/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      }
+      location / { return 404; }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: freespot-public-tunnel
+  labels: {app.kubernetes.io/part-of: freespot}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {app: freespot-public-tunnel}
+  template:
+    metadata:
+      labels: {app: freespot-public-tunnel, app.kubernetes.io/part-of: freespot}
+      annotations:
+        freespot-public-proxy-config: {{ .Values.rootPath | sha256sum | quote }}
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector: {{ .Values.nodeSelector | toJson }}
+      tolerations: {{ .Values.tolerations | toJson }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+        seccompProfile: {type: RuntimeDefault}
+      volumes:
+        - name: config
+          configMap: {name: freespot-public-proxy}
+        - name: cache
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      containers:
+        # Expose only FreeSpot, never the shared Traefik or other teams' routes.
+        - name: public-proxy
+          image: {{ .Values.publicTunnel.proxyImage | quote }}
+          command: [nginx, -g, "daemon off;"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: config, mountPath: /etc/nginx/conf.d, readOnly: true}
+            - {name: cache, mountPath: /var/cache/nginx}
+            - {name: tmp, mountPath: /tmp}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+          readinessProbe:
+            httpGet: {path: "{{ .Values.rootPath }}/ready", port: 8080}
+        - name: tunnel
+          image: {{ .Values.publicTunnel.image | quote }}
+          command: [/bin/sh, -c]
+          args:
+            - |
+              set -o pipefail
+              ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes \
+                -o UserKnownHostsFile=/etc/tunnel/known_hosts \
+                -o HostKeyAlgorithms=ssh-ed25519 \
+                -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+                -o ExitOnForwardFailure=yes -o ConnectTimeout=15 \
+                -o IdentityFile=none \
+                -R 80:127.0.0.1:8080 nokey@localhost.run -- --output json \
+                2>&1 | tee /tmp/tunnel.log
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: config, mountPath: /etc/tunnel, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {cpu: 200m, memory: 128Mi}
+          startupProbe:
+            exec:
+              command: [sh, -c, "grep -Eq '\"type\"[[:space:]]*:[[:space:]]*\"run.localhost.tunnel.registered\"' /tmp/tunnel.log"]
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            exec:
+              command: [sh, /etc/tunnel/health.sh]
+            periodSeconds: 30
+            timeoutSeconds: 15
+            failureThreshold: 2
+          livenessProbe:
+            exec:
+              command: [sh, /etc/tunnel/health.sh]
+            periodSeconds: 30
+            timeoutSeconds: 15
+            failureThreshold: 3
+{{- end }}

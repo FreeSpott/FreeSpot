@@ -9,6 +9,7 @@
 - Frontend: nginx без root, сборка с base `/team-3/`, прокси к API.
 - Traefik Ingress `/team-3`, strip-prefix Middleware и разрешение Traefik в NetworkPolicy.
 - Все Pods закреплены за узлом `student-team=team-3`, с соответствующей toleration.
+- Публичный HTTPS для демонстрации: SSH-туннель localhost.run, без аккаунта, домена и токена. Отдельный nginx публикует только `/team-3/` к frontend; другие маршруты общего Ingress не открываются.
 
 Постоянный том сохраняется при `helm uninstall`. `local-path` привязан к узлу и не является резервной копией. PostgreSQL в одной реплике; backend обновляется с короткой остановкой (`Recreate`).
 
@@ -66,7 +67,30 @@ curl -f http://<ADDRESS>/team-3/api/spots
 python3 deploy/k8s/verify.py http://<ADDRESS>/team-3/
 ```
 
-Приложение: `http://<ADDRESS>/team-3/` (со слешем в конце). Swagger: `http://<ADDRESS>/team-3/docs`. Адреса находятся в приватной сети; chart не выпускает TLS-сертификат.
+Внутреннее приложение: `http://<ADDRESS>/team-3/` (со слешем в конце). Swagger: `http://<ADDRESS>/team-3/docs`. `ADDRESS` находится в приватной сети и сам по себе не доступен из интернета. Chart не выпускает TLS-сертификат для внутреннего Ingress.
+
+Публичный адрес:
+
+```bash
+export KUBECONFIG="$HOME/Downloads/team-3.kubeconfig"
+python3 deploy/k8s/public-url.py
+# https://<случайное-имя>.app.lhr.life/team-3/
+python3 deploy/k8s/verify.py "$(python3 deploy/k8s/public-url.py)"
+```
+
+Туннель работает в Kubernetes, компьютер и port-forward оставлять включёнными не нужно. Нужен исходящий TCP 22 к localhost.run, открывать входящие порты не нужно. DNS и HTTPS обслуживает localhost.run; внешний трафик проходит через этот сторонний сервис. ED25519 host key закреплён в ConfigMap и сверён с [официальным fingerprint](https://localhost.run/docs/security). При ротации ключа соединение безопасно завершится ошибкой до обновления конфигурации.
+
+**Это демонстрационный, а не production-вход:** бесплатный анонимный адрес временный, может меняться через несколько часов и при переподключении. Kubernetes перезапускает оборвавшееся SSH-соединение; keepalive обнаруживает разрывы. Ссылка показывается в Summary ручного Deploy; текущую ссылку получите командой выше. Для постоянного адреса нужен домен и платный/именованный туннель либо публичный reverse proxy от администратора. Отключение: `deploy/k8s/deploy.sh --set publicTunnel.enabled=false` (ручной workflow с внешней проверкой рассчитан на включённый туннель).
+
+Readiness и liveness туннеля проверяют реальный публичный HTTPS `/team-3/ready`, а не только наличие сообщения о регистрации. После трёх подряд неудачных liveness-проверок Kubernetes перезапускает контейнер туннеля. Это восстанавливает соединение, но **не сохраняет старый бесплатный адрес**: при ошибке `no tunnel` получите текущий через `public-url.py`. Для этого компьютер должен иметь маршрут в приватную сеть кластера (лабораторная сеть или настроенный VPN).
+
+Если приватная сеть недоступна, используйте online self-hosted runner через GitHub Actions. В **Deploy → Run workflow** включите `repair_only` (выберите ветку с этой версией workflow). Этот режим сохраняет текущие теги образов и настройки релиза, не собирает приложение и не меняет пароли БД, обновляет конфигурацию и перезапускает туннель. Новая ссылка появляется в Summary, затем проверяется с внешнего runner:
+
+```bash
+gh workflow run deploy.yml --repo FreeSpott/FreeSpot --ref <ветка-с-исправлением> -f repair_only=true
+```
+
+Cloudflare Quick Tunnel в этой лабораторной сети не подходит: проверка соединений показала блокировку исходящих TCP/UDP 7844, хотя HTTPS API Cloudflare доступен.
 
 Для локальной проверки без Ingress:
 
@@ -84,7 +108,7 @@ curl -f http://localhost:18080/ready
 
 1. После слияния PR в `master` откройте **Actions → Deploy → Run workflow**.
 2. Выберите ветку, которую нужно развернуть, и нажмите **Run workflow**.
-3. Workflow проверит и соберёт выбранный commit через тот же CI, опубликует приватные образы, проверит read token и обновит imagePullSecret, выполнит Helm-деплой и проверит сайт/API через Ingress.
+3. Workflow проверит и соберёт выбранный commit через тот же CI, опубликует приватные образы, проверит read token и обновит imagePullSecret, выполнит Helm-деплой и проверит сайт/API через Ingress. Затем отдельная job на GitHub hosted runner проверит публичный HTTPS, API, статику и защиту API-ключом из интернета. Успешной внутренней проверки недостаточно для успешного Deploy.
 
 Кнопка ручного запуска появится после добавления workflow в основную ветку. Запуск доступен участникам с правом записи. Запуск из терминала:
 

@@ -2,18 +2,31 @@ name: Deploy
 run-name: Deploy ${{ github.ref_name }} by @${{ github.actor }}
 on:
   workflow_dispatch:
+    inputs:
+      repair_only:
+        description: Restore public tunnel without building or changing application image tags
+        type: boolean
+        default: false
+      restart_tunnel:
+        description: In repair mode, disable to only retrieve and verify the current URL
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 jobs:
   build:
+    if: ${{ !inputs.repair_only }}
     permissions:
       contents: read
       packages: write
     uses: ./.github/workflows/ci-cd.yml
   deploy:
     needs: build
+    if: ${{ always() && (needs.build.result == 'success' || inputs.repair_only) }}
+    outputs:
+      public_url: ${{ steps.public-url.outputs.url }}
     # The API server is in a private network. Register this runner there.
     runs-on: [self-hosted, linux, x64, team-3]
     timeout-minutes: 20
@@ -40,15 +53,20 @@ jobs:
           printf '%s' "$KUBE_CONFIG" > "$CONFIG"
           echo "KUBECONFIG=$CONFIG" >> "$GITHUB_ENV"
       - name: Configure private image pull access
+        if: ${{ !inputs.repair_only }}
         env:
           GHCR_USERNAME: ${{ vars.GHCR_USERNAME }}
           GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           IMAGE_TAG: sha-${{ github.sha }}
         run: python3 deploy/k8s/registry-secret.py
       - name: Deploy release
+        if: ${{ !inputs.repair_only }}
         env:
           IMAGE_TAG: sha-${{ github.sha }}
         run: deploy/k8s/deploy.sh
+      - name: Restore public tunnel with existing application images
+        if: ${{ inputs.repair_only && inputs.restart_tunnel }}
+        run: python3 deploy/k8s/repair-tunnel.py
       - name: Verify deployed application
         shell: bash
         run: |
@@ -56,7 +74,39 @@ jobs:
           ADDRESS=$(kubectl -n team-3 get ingress freespot -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
           test -n "$ADDRESS"
           python3 deploy/k8s/verify.py "http://$ADDRESS/team-3/"
+      - name: Discover public HTTPS URL
+        id: public-url
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL=$(python3 deploy/k8s/public-url.py)
+          echo "Public application: $URL"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "### Public application: $URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "Temporary demo URL may change after a few hours or on reconnect." >> "$GITHUB_STEP_SUMMARY"
       - name: Remove kubeconfig
         if: always()
         run: |
           if [ -n "${KUBECONFIG:-}" ]; then rm -f "$KUBECONFIG"; fi
+  verify-public:
+    needs: deploy
+    if: ${{ !cancelled() && needs.deploy.result == 'success' }}
+    # Deliberately outside the private cluster network.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify application from the internet
+        env:
+          PUBLIC_URL: ${{ needs.deploy.outputs.public_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in {1..12}; do
+            if python3 deploy/k8s/verify.py "$PUBLIC_URL"; then
+              echo "### Verified from the internet: $PUBLIC_URL" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 10
+          done
+          exit 1
