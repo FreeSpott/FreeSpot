@@ -7,6 +7,10 @@ on:
         description: Restore public tunnel without building or changing application image tags
         type: boolean
         default: false
+      restart_tunnel:
+        description: In repair mode, disable to only retrieve and verify the current URL
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -61,7 +65,7 @@ jobs:
           IMAGE_TAG: sha-${{ github.sha }}
         run: deploy/k8s/deploy.sh
       - name: Restore public tunnel with existing application images
-        if: ${{ inputs.repair_only }}
+        if: ${{ inputs.repair_only && inputs.restart_tunnel }}
         run: python3 deploy/k8s/repair-tunnel.py
       - name: Verify deployed application
         shell: bash
@@ -76,6 +80,7 @@ jobs:
         run: |
           set -euo pipefail
           URL=$(python3 deploy/k8s/public-url.py)
+          echo "Public application: $URL"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "### Public application: $URL" >> "$GITHUB_STEP_SUMMARY"
           echo "Temporary demo URL may change after a few hours or on reconnect." >> "$GITHUB_STEP_SUMMARY"
